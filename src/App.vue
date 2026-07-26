@@ -13,6 +13,7 @@ import {
 import TaskBoardRoot from './components/TaskBoardRoot.vue'
 import TaskBoardContent from './components/TaskBoardContent.vue'
 import TaskBoardColumnComp from './components/TaskBoardColumn.vue'
+import UserSelect from './components/UserSelect.vue'
 import { useTaskBoard } from './composables/useTaskBoard'
 import type {
   TaskBoardItem,
@@ -64,6 +65,26 @@ const allAssigneeOptions = computed(() => {
 })
 
 const avatarColors = ['#7c3aed', '#059669', '#ea580c', '#2563eb', '#db2777']
+
+// --- Toolbar UserSelect ---
+const toolbarAssignees = computed({
+  get: () => allAssignees.value.map(a => a.name),
+  set: (_val: string[]) => {
+    // handled by @update:model-value
+  }
+})
+
+function onToolbarAssigneesChange(newNames: string[]) {
+  // 移除不在新列表中的参与人
+  const toRemove = allAssignees.value.filter(a => !newNames.includes(a.name))
+  toRemove.forEach(a => removeAssignee(a.name))
+  // 添加新参与人（去重）
+  newNames.forEach(name => {
+    if (!allAssignees.value.some(a => a.name === name)) {
+      addAssignee(name)
+    }
+  })
+}
 
 function getAvatarColor(name: string): string {
   let hash = 0
@@ -312,52 +333,20 @@ function saveEditColumn() {
 }
 
 // --- Assignee Management ---
-const showAssigneeModal = ref(false)
-const newAssigneeName = ref('')
-const hoveredAssignee = ref<string | undefined>(undefined)
-const editingAssigneeName = ref<string | null>(null)
-const editingAssigneeNewName = ref('')
-
-function openAssigneeModal() {
-  showAssigneeModal.value = true
-}
-
-function addAssignee() {
-  const name = newAssigneeName.value.trim()
+function addAssignee(name: string) {
   if (name && !allAssignees.value.some(a => a.name === name)) {
     allAssignees.value.push({ name })
   }
-  newAssigneeName.value = ''
 }
 
-function removeAssignee(assignee: TaskBoardAssignee) {
-  const idx = allAssignees.value.findIndex(a => a.name === assignee.name)
+function removeAssignee(name: string) {
+  const idx = allAssignees.value.findIndex(a => a.name === name)
   if (idx !== -1) {
     allAssignees.value.splice(idx, 1)
   }
   board.tasks.value.forEach(task => {
-    task.assignees = task.assignees.filter(a => a.name !== assignee.name)
+    task.assignees = task.assignees.filter(a => a.name !== name)
   })
-}
-
-function renameAssignee(oldName: string, newName: string) {
-  newName = newName.trim()
-  if (!newName || newName === oldName) return
-  if (allAssignees.value.some(a => a.name === newName)) return
-
-  const idx = allAssignees.value.findIndex(a => a.name === oldName)
-  if (idx !== -1) {
-    allAssignees.value[idx] = { ...allAssignees.value[idx], name: newName }
-  }
-
-  board.tasks.value.forEach(task => {
-    const a = task.assignees.find(a => a.name === oldName)
-    if (a) a.name = newName
-  })
-}
-
-function finishRenameAssignee(oldName: string) {
-  renameAssignee(oldName, editingAssigneeNewName.value)
 }
 
 // --- Add Column Modal ---
@@ -521,13 +510,16 @@ function onGlobalDragStart(taskId: string, columnId: string) {
       :tasks-count="board.tasks.value.length"
       :tasks="board.tasks.value"
       :is-archived="isArchived"
+      :column-drag-state="board.columnDragState"
+      :assignee-options="allAssigneeOptions"
+      :toolbar-assignees="toolbarAssignees"
       @update:search-query="board.searchQuery.value = $event"
       @change-density="(d: TaskBoardDensity) => board.setDensity(d)"
       @download-json="board.downloadJSON()"
       @download-csv="board.downloadCSV()"
       @undo="board.undo()"
       @redo="board.redo()"
-      @manage-assignees="openAssigneeModal"
+      @update:toolbar-assignees="onToolbarAssigneesChange"
       @open-project-settings="openProjectSettings"
       @archive-project="archiveProject"
       @unarchive-project="unarchiveProject"
@@ -558,7 +550,7 @@ function onGlobalDragStart(taskId: string, columnId: string) {
         @edit="(task: TaskBoardItem) => openEditModal(task)"
         @edit-column="(col: TaskBoardColumnType) => openEditColumnModal(col)"
         @column-drag-start="(colId: string) => board.onColumnDragStart(colId)"
-        @column-drag-over="(idx: number, e: DragEvent) => board.onColumnDragOver(idx, e)"
+        @column-drag-over="(idx: number, side: 'left' | 'right', e: DragEvent) => board.onColumnDragOver(idx, side, e)"
         @column-drop="(idx: number) => board.onColumnDrop(idx)"
         @column-drag-end="board.onColumnDragEnd()"
       />
@@ -619,14 +611,9 @@ function onGlobalDragStart(taskId: string, columnId: string) {
           />
         </NFormItem>
         <NFormItem label="Assignees">
-          <NSelect
-            v-model:value="taskForm.assignees"
+          <UserSelect
+            v-model="taskForm.assignees"
             :options="allAssigneeOptions"
-            multiple
-            tag
-            filterable
-            placeholder="选择参与人"
-            @update:value="(val: string[]) => console.log('Add NSelect update:value', val)"
           />
         </NFormItem>
         <NFormItem label="Progress (0-100)">
@@ -701,14 +688,9 @@ function onGlobalDragStart(taskId: string, columnId: string) {
               />
             </NFormItem>
             <NFormItem label="Assignees">
-              <NSelect
-                v-model:value="taskForm.assignees"
+              <UserSelect
+                v-model="taskForm.assignees"
                 :options="allAssigneeOptions"
-                multiple
-                tag
-                filterable
-                placeholder="选择参与人"
-                @update:value="(val: string[]) => console.log('Edit NSelect update:value', val)"
               />
             </NFormItem>
           </NForm>
@@ -782,37 +764,6 @@ function onGlobalDragStart(taskId: string, columnId: string) {
           <NButton @click="showEditColumnModal = false">取消</NButton>
           <NButton type="primary" @click="saveEditColumn" :disabled="!editColumnForm.label.trim()">保存</NButton>
         </NSpace>
-      </template>
-    </NModal>
-
-    <!-- Manage Assignees Modal -->
-    <NModal v-model:show="showAssigneeModal" preset="card" title="管理参与人" style="width:420px" :mask-closable="false">
-      <div style="margin-bottom:16px">
-        <div style="font-size:14px;font-weight:600;color:#374151;margin-bottom:8px">已添加的参与人:</div>
-        <div v-if="allAssignees.length" class="manage-assignees__list">
-          <div
-            v-for="a in allAssignees"
-            :key="a.name"
-            class="manage-assignees__item"
-          >
-            <div class="manage-assignees__avatar" :style="{ background: getAvatarColor(a.name) }">
-              {{ getInitials(a.name) }}
-            </div>
-            <span class="manage-assignees__name">{{ a.name }}</span>
-            <span class="manage-assignees__remove" @click="removeAssignee(a)">&times;</span>
-          </div>
-        </div>
-        <div v-else style="text-align:center;padding:16px;color:#9ca3af;font-size:13px">暂无参与人</div>
-      </div>
-      <div style="margin-bottom:16px">
-        <div style="font-size:14px;font-weight:600;color:#374151;margin-bottom:8px">新增参与人:</div>
-        <div style="display:flex;gap:8px">
-          <NInput v-model:value="newAssigneeName" placeholder="输入姓名，回车添加" @keyup.enter="addAssignee" style="flex:1" />
-          <NButton type="primary" @click="addAssignee" :disabled="!newAssigneeName.trim()">添加</NButton>
-        </div>
-      </div>
-      <template #footer>
-        <NButton @click="showAssigneeModal = false">完成</NButton>
       </template>
     </NModal>
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { NButton, NInput, NSelect, NDropdown } from 'naive-ui'
+import UserSelect from './UserSelect.vue'
 import type { TaskBoardColumn, TaskBoardDensity, TaskBoardItem } from '@/types/taskboard'
 
 interface TaskBoardContentProps {
@@ -10,6 +11,9 @@ interface TaskBoardContentProps {
   tasksCount: number
   tasks: TaskBoardItem[]
   isArchived?: boolean
+  columnDragState?: { draggingColumnId: string | null; dragOverColumnIndex: number; dragOverSide: 'left' | 'right' | null }
+  assigneeOptions?: { label: string; value: string }[]
+  toolbarAssignees?: string[]
 }
 
 const props = defineProps<TaskBoardContentProps>()
@@ -21,7 +25,7 @@ const emit = defineEmits<{
   'download-csv': []
   'undo': []
   'redo': []
-  'manage-assignees': []
+  'update:toolbarAssignees': [value: string[]]
   'open-project-settings': []
   'archive-project': []
   'unarchive-project': []
@@ -40,37 +44,14 @@ const exportMenuOptions = [
   { label: 'Export CSV', key: 'csv' },
 ]
 
-const avatarColors = ['#7c3aed', '#059669', '#ea580c', '#2563eb', '#db2777']
-
-function getAvatarColor(name: string): string {
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  return avatarColors[Math.abs(hash) % avatarColors.length]
-}
-
-function getInitials(name: string): string {
-  return name.charAt(0).toUpperCase()
-}
-
-const uniqueAssignees = computed(() => {
-  const seen = new Set<string>()
-  return props.tasks
-    .flatMap(t => t.assignees || [])
-    .filter(a => {
-      if (seen.has(a.name)) return false
-      seen.add(a.name)
-      return true
-    })
-})
-
 const settingsOptions = computed(() => [
   { label: '项目设置', key: 'settings' },
   { label: props.isArchived ? '取消归档' : '项目归档', key: 'archive' },
   { type: 'divider' as const, key: 'd1' },
   { label: '项目删除', key: 'delete' },
 ])
+
+const safeToolbarAssignees = computed(() => props.toolbarAssignees ?? [])
 
 function handleSettingsSelect(key: string) {
   if (key === 'settings') emit('open-project-settings')
@@ -80,6 +61,26 @@ function handleSettingsSelect(key: string) {
   }
   else if (key === 'delete') emit('delete-project')
 }
+
+// --- Column drop floating indicator ---
+const dropIndicatorLeft = ref(0)
+
+watch(() => [props.columnDragState?.dragOverColumnIndex, props.columnDragState?.dragOverSide], async ([idx, side]) => {
+  if (idx === null || idx === undefined || idx === -1) return
+  if (!side) return
+  await nextTick()
+  const el = document.querySelector(`[data-column-index="${idx}"]`) as HTMLElement | null
+  if (!el) return
+  const container = el.closest('.taskboard-columns') as HTMLElement | null
+  if (!container) return
+  const containerRect = container.getBoundingClientRect()
+  const elRect = el.getBoundingClientRect()
+  if (side === 'left') {
+    dropIndicatorLeft.value = elRect.left - containerRect.left - 2
+  } else {
+    dropIndicatorLeft.value = elRect.right - containerRect.left + 2
+  }
+})
 </script>
 
 <template>
@@ -119,34 +120,13 @@ function handleSettingsSelect(key: string) {
         <NButton size="small" quaternary>Export</NButton>
       </NDropdown>
 
-      <div
-        class="taskboard-toolbar__avatar-group"
-        @click="emit('manage-assignees')"
-        title="管理参与人"
-      >
-        <div class="avatar-stack">
-          <div
-            v-for="(assignee, i) in uniqueAssignees.slice(0, 5)"
-            :key="assignee.name"
-            class="avatar-stack__item"
-            :style="{
-              backgroundColor: getAvatarColor(assignee.name),
-              zIndex: 5 - i,
-              marginLeft: i > 0 ? '-10px' : '0'
-            }"
-            :title="assignee.name"
-          >
-            {{ getInitials(assignee.name) }}
-          </div>
-          <div
-            v-if="uniqueAssignees.length > 5"
-            class="avatar-stack__item avatar-stack__overflow"
-            style="marginLeft: '-10px'; zIndex: 0"
-          >
-            +{{ uniqueAssignees.length - 5 }}
-          </div>
-        </div>
-      </div>
+      <UserSelect
+        v-model="safeToolbarAssignees"
+        :options="assigneeOptions ?? []"
+        title="选择参与人"
+        placeholder="搜索"
+        @update:model-value="emit('update:toolbarAssignees', $event)"
+      />
 
       <NDropdown
         trigger="click"
@@ -176,15 +156,18 @@ function handleSettingsSelect(key: string) {
     <div class="taskboard-columns">
       <slot />
       <div
+        v-if="props.columnDragState?.dragOverColumnIndex !== null && props.columnDragState?.dragOverColumnIndex !== undefined && props.columnDragState?.draggingColumnId"
+        class="column-drop-indicator"
+        :style="{ left: dropIndicatorLeft + 'px' }"
+      />
+      <div
         v-if="!props.isArchived"
-        class="taskboard-add-column-btn"
+        class="taskboard-column taskboard-add-column"
         @click="emit('add-column')"
       >
-        <div class="taskboard-add-column-btn__inner">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M10 4V16M4 10H16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-          <span>添加列</span>
+        <div class="taskboard-column__header">
+          <span class="taskboard-add-column__icon">+</span>
+          <span class="taskboard-add-column__text">添加列</span>
         </div>
       </div>
     </div>

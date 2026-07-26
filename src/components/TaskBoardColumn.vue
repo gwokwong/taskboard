@@ -6,7 +6,7 @@ const props = defineProps<{
   column: TaskBoardColumn
   tasks: TaskBoardItem[]
   dragState: TaskBoardDragState
-  columnDragState: { draggingColumnId: string | null; dragOverColumnIndex: number }
+  columnDragState: { draggingColumnId: string | null; dragOverColumnIndex: number; dragOverSide: 'left' | 'right' | null }
   selectedTaskIds: Set<string>
   isWipExceeded: boolean
   columnIndex: number
@@ -27,7 +27,7 @@ const emit = defineEmits<{
   'edit': [task: TaskBoardItem]
   'edit-column': [column: TaskBoardColumn]
   'column-drag-start': [columnId: string]
-  'column-drag-over': [index: number, e: DragEvent]
+  'column-drag-over': [index: number, side: 'left' | 'right', e: DragEvent]
   'column-drop': [index: number]
   'column-drag-end': []
 }>()
@@ -38,9 +38,6 @@ const columnClass = computed(() => [
   {
     'taskboard-column--collapsed': props.column.collapsed,
     'taskboard-column--wip-exceeded': props.isWipExceeded,
-    'taskboard-column--drop-target': props.columnDragState.draggingColumnId &&
-      props.columnDragState.dragOverColumnIndex === props.columnIndex &&
-      props.columnDragState.draggingColumnId !== props.column.id,
     'taskboard-column--dragging-column': props.columnDragState.draggingColumnId === props.column.id,
   },
 ])
@@ -85,11 +82,51 @@ function handleColumnDragOver(e: DragEvent) {
     }
   }
 }
+
+// --- Column header drag & drop ---
+
+function onColumnHeaderDragStart(e: DragEvent) {
+  if (props.isArchived) return
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(props.columnIndex))
+  }
+  emit('column-drag-start', props.column.id)
+}
+
+function onColumnHeaderDragOver(e: DragEvent) {
+  if (!props.columnDragState.draggingColumnId) return
+  if (e.dataTransfer) {
+    e.dataTransfer.dropEffect = 'move'
+  }
+  const columnEl = (e.currentTarget as HTMLElement).closest('.taskboard-column') as HTMLElement
+  if (!columnEl) return
+  const rect = columnEl.getBoundingClientRect()
+  const midX = rect.left + rect.width / 2
+  const side = e.clientX < midX ? 'left' : 'right'
+  emit('column-drag-over', props.columnIndex, side, e)
+}
+
+function onColumnHeaderDrop(e: DragEvent) {
+  e.preventDefault()
+  if (props.columnDragState.draggingColumnId) {
+    emit('column-drop', props.columnIndex)
+  }
+}
+
+function onColumnHeaderDragEnd() {
+  emit('column-drag-end')
+}
+
+function onColumnHeaderDragLeave() {
+  // no-op; drop-target visual managed by columnDragState from parent
+}
 </script>
 
 <template>
   <div
     :class="columnClass"
+    :data-column-index="columnIndex"
     @dragover="handleColumnDragOver"
     @drop="handleColumnDrop"
     @dragleave="handleDragLeave"
@@ -97,8 +134,15 @@ function handleColumnDragOver(e: DragEvent) {
     <!-- Column Header -->
     <div
       class="taskboard-column-header"
+      :draggable="!props.isArchived"
       :style="column.color ? { '--col-color': column.color, cursor: props.isArchived ? 'default' : undefined } : {}"
+      @dragstart="onColumnHeaderDragStart"
+      @dragover.prevent="onColumnHeaderDragOver"
+      @drop="onColumnHeaderDrop"
+      @dragend="onColumnHeaderDragEnd"
+      @dragleave="onColumnHeaderDragLeave"
     >
+      <span v-if="!props.isArchived" class="taskboard-column__drag-handle" aria-hidden="true">⠿</span>
       <span
         class="taskboard-column-header__label"
         @click.stop="!props.isArchived && emit('edit-column', column)"

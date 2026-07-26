@@ -37,6 +37,7 @@ export function useTaskBoard(initialColumns: TaskBoardColumn[], initialTasks: Ta
   const columnDragState = reactive({
     draggingColumnId: null as string | null,
     dragOverColumnIndex: -1,
+    dragOverSide: null as 'left' | 'right' | null,
   })
 
   // Context menu
@@ -277,29 +278,36 @@ export function useTaskBoard(initialColumns: TaskBoardColumn[], initialTasks: Ta
     columnDragState.draggingColumnId = columnId
   }
 
-  function onColumnDragOver(index: number, e: DragEvent) {
+  function onColumnDragOver(index: number, side: 'left' | 'right', e: DragEvent) {
     e.preventDefault()
     if (e.dataTransfer) {
       e.dataTransfer.dropEffect = 'move'
     }
     columnDragState.dragOverColumnIndex = index
+    columnDragState.dragOverSide = side
   }
 
   function onColumnDrop(targetIndex: number) {
     const draggingId = columnDragState.draggingColumnId
     if (!draggingId) return
 
-    const dragCol = columns.value.find(c => c.id === draggingId)
     const dragIndex = columns.value.findIndex(c => c.id === draggingId)
-    if (!dragCol || dragIndex === -1) { resetColumnDrag(); return }
+    if (dragIndex === -1) { resetColumnDrag(); return }
 
-    if (dragIndex === targetIndex) { resetColumnDrag(); return }
+    // Same column drop is a no-op
+    if (columns.value[targetIndex].id === draggingId) { resetColumnDrag(); return }
 
-    // Reorder columns
+    // Reorder columns based on drop side
     const updated = [...columns.value]
     const [moved] = updated.splice(dragIndex, 1)
-    updated.splice(targetIndex, 0, moved)
-    // Update order
+
+    const targetId = columns.value[targetIndex].id
+    let insertIdx = updated.findIndex(c => c.id === targetId)
+    if (columnDragState.dragOverSide === 'right') {
+      insertIdx++
+    }
+
+    updated.splice(insertIdx, 0, moved)
     updated.forEach((c, i) => { c.order = i })
     columns.value = updated
 
@@ -313,6 +321,7 @@ export function useTaskBoard(initialColumns: TaskBoardColumn[], initialTasks: Ta
   function resetColumnDrag() {
     columnDragState.draggingColumnId = null
     columnDragState.dragOverColumnIndex = -1
+    columnDragState.dragOverSide = null
   }
 
   // --- Undo / Redo ---
